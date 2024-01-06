@@ -1,11 +1,12 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Form
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
+from jose import jwt, JWTError
+from fastapi.responses import JSONResponse
 from app import crud, models, schemas
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-import python_jose as jose
 
 app = FastAPI()
 
@@ -17,7 +18,6 @@ models.Base.metadata.create_all(bind=engine)
 SECRET_KEY = "123456"
 ALGORITHM = "HS256"
 
-
 def get_db():
     db = SessionLocal()
     try:
@@ -25,22 +25,19 @@ def get_db():
     finally:
         db.close()
 
-
 def create_jwt_token(data: dict, expires_delta: timedelta):
     to_encode = data.copy()
     expire = datetime.utcnow() + expires_delta
     to_encode.update({"exp": expire})
-    encoded_jwt = jose.jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
-
 
 def create_refresh_token(data: dict, expires_delta: timedelta):
     to_encode = data.copy()
     expire = datetime.utcnow() + expires_delta
     to_encode.update({"exp": expire})
-    encoded_jwt = jose.jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
-
 
 def create_tokens(data: dict):
     access_token_expires = timedelta(minutes=15)
@@ -50,7 +47,6 @@ def create_tokens(data: dict):
     refresh_token = create_refresh_token(data, refresh_token_expires)
     return access_token, refresh_token
 
-
 def decode_jwt_token(token: str):
     credentials_exception = HTTPException(
         status_code=401,
@@ -58,16 +54,12 @@ def decode_jwt_token(token: str):
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jose.jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload
-    except jose.jwt.ExpiredSignatureError:
+    except JWTError:
         raise credentials_exception
-    except jose.jwt.InvalidTokenError:
-        raise credentials_exception
-
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
 
 def get_current_user(token: str = Depends(oauth2_scheme)):
     credentials_exception = HTTPException(
@@ -78,11 +70,8 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
         payload = decode_jwt_token(token)
         return payload
-    except jose.jwt.ExpiredSignatureError:
-        raise credentials_exception
-    except jose.jwt.InvalidTokenError:
-        raise credentials_exception
-
+    except Exception as e:
+        raise credentials_exception from e
 
 @app.post("/register", response_model=dict)
 def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
@@ -125,7 +114,7 @@ def create_contact(contact: schemas.ContactCreate, db: Session = Depends(get_db)
 @app.get("/upcoming_birthdays", response_model=dict, dependencies=[Depends(get_current_user)])
 async def get_upcoming_birthdays_route(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     upcoming_birthdays = crud.get_upcoming_birthdays(db, current_user["sub"])
-    return {"upcoming_birthdays": upcoming_birthdays}
+    return JSONResponse(content={"upcoming_birthdays": upcoming_birthdays})
 
 @app.get("/contacts/", response_model=list[schemas.ContactRead])
 def read_contacts(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
@@ -134,7 +123,7 @@ def read_contacts(skip: int = 0, limit: int = 10, db: Session = Depends(get_db))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/conч'tacts/{contact_id}", response_model=schemas.ContactRead)
+@app.get("/contacts/{contact_id}", response_model=schemas.ContactRead)
 def read_contact(contact_id: int, db: Session = Depends(get_db)):
     try:
         return crud.get_contact_by_id(db=db, contact_id=contact_id)
@@ -161,4 +150,3 @@ def search_contacts(query: str, db: Session = Depends(get_db)):
         return crud.search_contacts(db=db, query=query)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
