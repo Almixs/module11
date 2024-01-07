@@ -1,15 +1,37 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from jose import jwt, JWTError
 from fastapi.responses import JSONResponse
+from fastapi_ratelimit import RateLimiter
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi_ratelimit.backends import AIOBackend
+from cloudinary.uploader import upload  # Імпортуйте функцію завантаження з Cloudinary
+
 from app import crud, models, schemas
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 app = FastAPI()
 
+# Увімкнення CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Конфігурації Cloudinary
+cloudinary.config(
+    cloud_name="your_cloud_name",
+    api_key="your_api_key",
+    api_secret="your_api_secret"
+)
+
+rate_limiter = RateLimiter(calls=5, period=1)
 DATABASE_URL = "postgresql://postgres:admin1234@localhost/database"
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -17,6 +39,14 @@ models.Base.metadata.create_all(bind=engine)
 
 SECRET_KEY = "123456"
 ALGORITHM = "HS256"
+
+backend = AIOBackend()
+limiter = RateLimiter(
+    backend=backend,
+    global_limits=("100 per minute",),
+    individual_limits={},
+)
+
 
 def get_db():
     db = SessionLocal()
@@ -86,6 +116,9 @@ def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
     db_user = crud.create_user(db=db, user=user)
     access_token, refresh_token = create_tokens(data={"sub": db_user.username})
 
+    verification_token = crud.generate_verification_token()  # Якщо це функція в вашому модулі crud
+    crud.update_verification_token(db, db_user.id, verification_token)  # Якщо це функція в вашому модулі crud
+
     return {"access_token": access_token, "token_type": "bearer", "refresh_token": refresh_token}
 
 @app.post("/token", response_model=dict)
@@ -100,7 +133,21 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 def protected_route(current_user: dict = Depends(get_current_user)):
     return {"message": "This is a protected route", "current_user": current_user}
 
-@app.post("/contacts/", response_model=schemas.ContactRead, dependencies=[Depends(get_current_user)])
+@app.get("/verify-email/{verification_token}", response_model=dict)
+def verify_email(verification_token: str, db: Session = Depends(get_db)):
+    # Пошук користувача за токеном верифікації
+    db_user = crud.get_user_by_verification_token(db, verification_token)
+    if not db_user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification token")
+
+    # Оновлення статусу верифікації та очищення токену
+    db_user.email_verified = True
+    db_user.verification_token = ""
+    db.commit()
+
+    return {"message": "Email verification successful"}
+
+@app.post("/contacts/", response_model=schemas.ContactRead, dependencies=[Depends(limiter)])
 def create_contact(contact: schemas.ContactCreate, db: Session = Depends(get_db),
                    current_user: dict = Depends(get_current_user)):
     try:
@@ -148,5 +195,23 @@ def delete_contact(contact_id: int, db: Session = Depends(get_db)):
 def search_contacts(query: str, db: Session = Depends(get_db)):
     try:
         return crud.search_contacts(db=db, query=query)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/update-avatar", response_model=dict)
+async def update_avatar(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    try:
+        # Завантажте файл на Cloudinary
+        cloudinary_response = upload(file.file, folder="avatars")
+
+        # Оновіть аватар користувача в базі даних
+        avatar_url = cloudinary_response['secure_url']
+        crud.update_user_avatar(db=db, user_id=current_user["sub"], avatar_url=avatar_url)
+
+        return {"message": "Avatar updated successfully", "avatar_url": avatar_url}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

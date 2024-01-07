@@ -7,6 +7,23 @@ from sqlalchemy.orm import Session
 from .models import User
 from . import schemas
 from passlib.hash import bcrypt
+import secrets
+
+def generate_verification_token(email: str) -> str:
+    # Use a secure method to generate a verification token
+    token = secrets.token_urlsafe(32)
+    return token
+
+def update_verification_token(db: Session, user_id: int, token: str):
+    db_user = db.query(User).filter(User.id == user_id).first()
+    if db_user:
+        db_user.verification_token = token
+        db.commit()
+        db.refresh(db_user)
+        return db_user
+
+def get_user_by_verification_token(db: Session, token: str):
+    return db.query(User).filter(User.verification_token == token).first()
 
 def get_user_by_username(db: Session, username: str):
     return db.query(User).filter(User.username == username).first()

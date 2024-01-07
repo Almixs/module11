@@ -19,6 +19,8 @@ passlib = { extras = ["bcrypt"], version = "^1.7.4" }
 libgravatar = "^1.0.4"
 fastapi-users = {extras = ["sqlalchemy"], version = "^12.1.2"}
 psycopg2 = "^2.9.9"
+sendgrid = "^6.11.0"
+psycopg2-binary = "^2.9.9"
 
 
 [build-system]
