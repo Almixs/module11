@@ -49,6 +49,12 @@ limiter = RateLimiter(
 
 
 def get_db():
+    """
+    Отримання сесії бази даних.
+
+    :return: Об'єкт сесії бази даних
+    """
+
     db = SessionLocal()
     try:
         yield db
@@ -56,6 +62,13 @@ def get_db():
         db.close()
 
 def create_jwt_token(data: dict, expires_delta: timedelta):
+    """
+    Створення JWT-токену.
+
+    :param data: Дані для кодування у токені
+    :param expires_delta: Тривалість дії токену
+    :return: Створений JWT-токен
+    """
     to_encode = data.copy()
     expire = datetime.utcnow() + expires_delta
     to_encode.update({"exp": expire})
@@ -204,6 +217,15 @@ async def update_avatar(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
+    """
+        Оновлення аватара користувача за допомогою завантаження на Cloudinary.
+
+        :param file: Завантажений файл аватара
+        :param db: Об'єкт сесії бази даних
+        :param current_user: Дані поточного користувача
+        :return: Інформація про успішне оновлення аватара
+        """
+
     try:
         # Завантажте файл на Cloudinary
         cloudinary_response = upload(file.file, folder="avatars")
